@@ -1,30 +1,44 @@
-# VB.NETからWindows API呼び出しエラー箇所へステップインして引数を調査する手順
+# VB.NETからWindows APIの呼び出し(PInvoke)をステップインして動作確認を行うための手順(AccessViolationException)
 
 ## 前書き
-* Visual Studioのネイティブデバッグ機能を使い、Windows API側に引き渡されている引数の値を直接確認する手順を記載します。
 
-* VB6のソースをVB.NETに移行した場合に苦労するのがAPI呼び出しのエラー修正です。困ったときの助けになればと思います。
-* 基本的にはDeclareの定義が間違っているか、引数が間違っているのでググって修正しますが、
-引数を確認することで本当に想定した値がセットされているのか確認することができます。
+* VB6のソースをVB.NETに移行した場合に苦労するのがAPI呼び出しエラーの修正です。困ったときの助けになればと思います。
 
-* Visual Studioの初期設定では、ネイティブコードのデバッグが有効になっていないため、設定変更が必要です。
+* Visual Studioのネイティブデバッグ機能を使い、Windows API側に引き渡されている引数の値を**API側から**確認する手順を記載します。
+
+  * .NET側からはポインタや、アドレスの参照先がわからないのでネイティブデバッグします。
+
+* Declareの定義を修正、もしくは引数を修正後、本当に想定した値がセットされているのか確認することができます。
+
+* Visual Studioの初期設定では、ネイティブコードデバッグが有効になっていないため、あちこちの設定を変更します。
+
+* 動作確認用のソースはこちらで公開しています。
+
+https://github.com/murasuke/DebugPInvokeVB
 
 
 ## 環境
 
 * Visual Studio 2019 (Visual Basic)
 
-    VS2015以降であれば、ほぼ同じだと思います(テンプレート文字列「$"～"」はコメントアウトするか、修正してください）
+    VS2015以降であれば、ほぼ同じだと思います。
 
 ## サンプルソース
 
-（CreateDCの呼び出しでエラーになります）
+* CreateDCの呼び出しでエラーになります(バグっています。VB6のソースをコンバートしたイメージで書いています。)
+
+  * プリンターの描画領域サイズをGetDeviceCaps()で取得するサンプルコードです。
+    
+  * DeleteDC()の3番目、4番目はnullを指定します(nullがないので0で代用)。本来はDEVMODE構造体を渡すのですが、nullでも動作上は問題ないです。
 
 ```vb
 Module DebugPInvoke
+    ' API定義
     Declare Function CreateDC Lib "gdi32" Alias "CreateDCA" _
-        (ByVal lpDriverName As String, ByVal lpDeviceName As String, ByVal lpOutput As String, ByVal lpInitData As Object) As Integer
-    Declare Function GetDeviceCaps Lib "gdi32" Alias "GetDeviceCaps" (ByVal hdc As Integer, ByVal nIndex As Integer) As Integer
+        (ByVal lpDriverName As String, ByVal lpDeviceName As String, 
+        ByVal lpOutput As String, ByVal lpInitData As Object) As Integer
+    Declare Function GetDeviceCaps Lib "gdi32" Alias "GetDeviceCaps" _
+        (ByVal hdc As Integer, ByVal nIndex As Integer) As Integer
     Declare Function DeleteDC Lib "gdi32" Alias "DeleteDC" (ByVal hdc As Integer) As Integer
 
     Sub Main()
@@ -34,8 +48,8 @@ Module DebugPInvoke
         Dim hDC = CreateDC("WINSPOOL", PRINTER_NAME, 0, 0)
 
         ' プリンターの描画サイズを取得
-        Dim width_pix = GetDeviceCaps(hDC, 8) ' HORZRES, ピクセル単位の画面の幅
-        Dim height_pix = GetDeviceCaps(hDC, 10) 'VERTRES, ピクセル単位（ラスタ行数）の画面の高さ
+        Dim width_pix = GetDeviceCaps(hDC, 8) ' 8:HORZRES, ピクセル単位の画面の幅
+        Dim height_pix = GetDeviceCaps(hDC, 10) '10:VERTRES, ピクセル単位の画面の高さ
         Debug.WriteLine(PRINTER_NAME & " : " & width_pix & " × " & height_pix)
 
         DeleteDC(hDC)
@@ -43,9 +57,13 @@ Module DebugPInvoke
 End Module
 ```
 
-例外発生画面
+* 例外発生画面
+
+  F5で実行すると例外が発生します。
 
     ![Exception_CreateDC.png](./img/Exception_CreateDC.png)
+
+    このエラーメッセージでは、どこに原因があるか見当もつきません。ネイティブコードをデバッグできるように設定して、API側から引数を調べてみます。
 
 ## デバッグのための準備
 
@@ -71,25 +89,23 @@ End Module
 
     ![Enable_SymbolServer.png](./img/Enable_SymbolServer.png)
 
-    ※デバッグ開始時に時間がかかります。
+    ※デバッグ開始時に多少時間がかかるようになります。
 
 これで完了です。
 
 ## ネイティブコード側からAPIの引数を確認する
 
-### ここでネイティブコードにステップインするため、設定をを行います。
+### ここではネイティブコードにステップインするため、デバッグを開始してから設定をを行います。
 
-1. CreateDC()にブレークポイントセット
-1. `F5`でデバッグを開始して、ブレークポイントで止まるのを待ちます(シンボル情報をダウンロードするため少し時間がかかる)
+1. `CreateDC()`行にブレークポイントセット(`F9`)
+1. `F5`でデバッグを開始して、ブレークポイント(`CreateDC`)で止まるのを待ちます(シンボル情報をダウンロードするため少し時間がかかる)
 1. `呼び出し履歴`を表示
 
     メニューバーの`デバッグ` ⇒ `ウィンドウ` ⇒ `呼び出し履歴` 
 
-    ![Show_Stacktrace.png](./img/Show_Stacktrace.png)
-
-1. `呼び出し履歴`を右クリックして`外部コードの表示`
-
     ![Enable_ExternalCode.png](./img/Enable_ExternalCode.png)
+
+    `マイコードのみを有効にする`のチェックを外したため、ネイティブコードの関数名も表示されています。
 
 1. ソースコードを右クリックして`逆アセンブリへ移動`をクリック
 
@@ -105,7 +121,7 @@ End Module
 
     ![Stacktrace_External.png](./img/Stacktrace_External.png)
 
-### CrateDC()側から引数を確認する
+### `CrateDC()`側から引数を確認する (スタックのベースポインタ(EBP)から探します)
 
 1. `呼び出し履歴`から`gdi32.dll!_CreateDCA@16()`を選択します
 
@@ -117,9 +133,18 @@ End Module
 
 1. メモリウィンドウを右クリックして `4バイトの変数` と `16進数で表示` を選択します
 
-1. メモリ1のアドレスに`@ebp`と入力します。(ベースポインタ⇒スタック上に確保されているデータの格納領域の基点)
+    32bitのプロセスで動いているため、4バイト単位に区切って表示をします。
+
+1. メモリ1のアドレスに`ebp`と入力します。(ベースポインタ⇒スタック上に確保されているデータの格納領域の基点)
 
     ![Memory_CreateDC.png](./img/Memory_CreateDC.png)
+
+    `ebp`はCPUのレジスタの名前です。詳細は下記のページなどを参照してくださいい。
+
+    [x86アセンブリ言語での関数コール](https://vanya.jp.net/os/x86call/)
+
+    [スタックフレーム - 関数に渡される引数を知る](https://www.keicode.com/debug/dbg205.php)
+
 
 * 左上から順に、ひとつ前のフレームのEBP、リターンアドレス(関数の戻り先アドレス)、引数1、引数2、引数3、引数4です。
 
@@ -137,19 +162,21 @@ End Module
 
     ![Memory_Args1.png](./img/Memory_Args1.png)
 
+    同様に引数2には`Microsoft Print to PDF`が入っています。
+
     ![Memory_Args2.png](./img/Memory_Args2.png)
 
-* 引数3と引数4を見ると、ソース上では`0(null)`を渡したつもりですが、なぜか0ではない値がセットされてます。
+* 引数3と引数4を見ると、ソース上では`0(null)`を渡したつもりですが、なぜか0ではない値(00d8bcac,00000003)がセットされてます。
 
 ```VB
-Dim hDC = CreateDC("WINSPOOL", PRINTER_NAME, 0, 0)
+    Dim hDC = CreateDC("WINSPOOL", PRINTER_NAME, 0, 0)
 ```
 
 * 引数3の値のアドレスを見ると文字列で'0'が入っています。⇒引数の型をStringで宣言しているため、数値の0が文字に変換され、そのポインタがCrateDC()に渡されていることがわかります。
 
     ![Memory_Args3.png](./img/Memory_Args3.png)
 
-* 引数4の`00000003`は何かわかりませんが、少なくとも期待していた`0`ではない値がセットされています。
+* 引数4の`00000003`は何かわかりませんが、少なくとも期待していた`0`ではない値がセットされていることがわかります。
 
 
     __VB側で渡した値と異なる原因はDeclareの宣言がまちがっているためです。修正してもう一度試してみます__
@@ -169,8 +196,17 @@ Declare Function CreateDC Lib "gdi32" Alias "CreateDCA" _
 
 もう一度デバッグで確認すると、3番目の引数と4番目の引数に`0（null）`がセットされていることが確認できました。
 
-![Memory_FixBug.png](./img/Memory_FixBug.png)
+  ![Memory_FixBug.png](./img/Memory_FixBug.png)
 
 
-* 例外で停止しなくなるため`逆アセンブリへ移動`した後、下記call命令の位置でF11でステップインする必要があります。
-![Stepin_CreteDC.png](./img/Stepin_CreteDC.png)
+
+* 例外で停止しなくなるため`逆アセンブリへ移動`した後、下記call命令の位置にブレークポイントをセットして停止させた後、F11でステップインする必要があります。
+
+  ![Stepin_CreteDC.png](./img/Stepin_CreteDC.png)
+
+
+## 後書き
+
+あまり使わない機能ですので、不正確な部分や、説明が不足している箇所があるかもしれません。
+添削や過不足あれば、お気軽にご指摘ください。
+
